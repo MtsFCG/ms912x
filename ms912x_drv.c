@@ -20,6 +20,10 @@
 
 #include "ms912x.h"
 
+#include <linux/version.h>
+
+#include <linux/timer.h>
+
 static int ms912x_usb_suspend(struct usb_interface *interface,
 			      pm_message_t message)
 {
@@ -63,7 +67,6 @@ static const struct drm_driver driver = {
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
-	.date = DRIVER_DATE,
 	.major = DRIVER_MAJOR,
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
@@ -274,8 +277,6 @@ static int ms912x_usb_probe(struct usb_interface *interface,
 	ret = drm_dev_register(dev, 0);
 	if (ret)
 		goto err_free_request_1;
-
-	drm_fbdev_ttm_setup(dev, 0);
 
 	return 0;
 

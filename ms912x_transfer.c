@@ -2,6 +2,8 @@
 #include <linux/dma-buf.h>
 #include <linux/vmalloc.h>
 
+#include <linux/timer.h>
+
 #include <drm/drm_drv.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 
@@ -9,7 +11,7 @@
 
 static void ms912x_request_timeout(struct timer_list *t)
 {
-	struct ms912x_usb_request *request = from_timer(request, t, timer);
+	struct ms912x_usb_request *request = container_of(t, struct ms912x_usb_request, timer);
 	usb_sg_cancel(&request->sgr);
 }
 
@@ -28,7 +30,7 @@ static void ms912x_request_work(struct work_struct *work)
 		    request->transfer_len, GFP_KERNEL);
 	mod_timer(&request->timer, jiffies + msecs_to_jiffies(5000));
 	usb_sg_wait(sgr);
-	del_timer_sync(&request->timer);
+	timer_shutdown_sync(&request->timer);
 	complete(&request->done);
 }
 
