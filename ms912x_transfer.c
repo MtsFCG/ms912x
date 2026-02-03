@@ -127,12 +127,10 @@ static int ms912x_xrgb_to_yuv422_line(u8 *transfer_buffer,
 		y1 = ms912x_rgb_to_y(r1, g1, b1);
 		y2 = ms912x_rgb_to_y(r2, g2, b2);
 
-		v = (ms912x_rgb_to_v(r1, g1, b1) +
-		     ms912x_rgb_to_v(r2, g2, b2)) /
-		    2;
-		u = (ms912x_rgb_to_u(r1, g1, b1) +
-		     ms912x_rgb_to_u(r2, g2, b2)) /
-		    2;
+		// Optimization: Average RGB first, then convert to UV once.
+		// This saves half the multiplications for the UV channels.
+		v = ms912x_rgb_to_v((r1 + r2) / 2, (g1 + g2) / 2, (b1 + b2) / 2);
+		u = ms912x_rgb_to_u((r1 + r2) / 2, (g1 + g2) / 2, (b1 + b2) / 2);
 
 		transfer_buffer[dst_offset++] = u;
 		transfer_buffer[dst_offset++] = y1;
@@ -218,9 +216,11 @@ int ms912x_fb_send_rect(struct drm_framebuffer *fb, const struct iosys_map *map,
 	if (ret < 0)
 		goto dev_exit;
 
-	/* Sending frames too fast, drop it */
-	if (!wait_for_completion_timeout(&prev_request->done,
-					 msecs_to_jiffies(10))) {
+	/* Sending frames too fast, drop it.
+	 * Do not wait (timeout=0) to avoid blocking the compositor/cursor
+	 * if the USB bus is busy. It's better to drop a frame than to lag.
+	 */
+	if (!wait_for_completion_timeout(&prev_request->done, 0)) {
 
 		ret = -ETIMEDOUT;
 		goto dev_exit;
