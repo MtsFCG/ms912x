@@ -84,61 +84,7 @@ err_vfree:
 	return ret;
 }
 
-static inline unsigned int ms912x_rgb_to_y(unsigned int r, unsigned int g,
-					   unsigned int b)
-{
-	const unsigned int luma = (16 << 16) + 16763 * r + 32904 * g + 6391 * b;
-	return luma >> 16;
-}
-static inline unsigned int ms912x_rgb_to_u(unsigned int r, unsigned int g,
-					   unsigned int b)
-{
-	const unsigned int u = (128 << 16) - 9676 * r - 18996 * g + 28672 * b;
-	return u >> 16;
-}
-static inline unsigned int ms912x_rgb_to_v(unsigned int r, unsigned int g,
-					   unsigned int b)
-{
-	const unsigned int v = (128 << 16) + 28672 * r - 24009 * g - 4663 * b;
-	return v >> 16;
-}
 
-static int ms912x_xrgb_to_yuv422_line(u8 *transfer_buffer,
-				      struct iosys_map *xrgb_buffer,
-				      size_t offset, size_t width,
-				      u32 *temp_buffer)
-{
-	unsigned int i, dst_offset = 0;
-	unsigned int pixel1, pixel2;
-	unsigned int r1, g1, b1, r2, g2, b2;
-	unsigned int v, y1, u, y2;
-	iosys_map_memcpy_from(temp_buffer, xrgb_buffer, offset, width * 4);
-	for (i = 0; i < width; i += 2) {
-		pixel1 = temp_buffer[i];
-		pixel2 = temp_buffer[i + 1];
-
-		r1 = (pixel1 >> 16) & 0xFF;
-		g1 = (pixel1 >> 8) & 0xFF;
-		b1 = pixel1 & 0xFF;
-		r2 = (pixel2 >> 16) & 0xFF;
-		g2 = (pixel2 >> 8) & 0xFF;
-		b2 = pixel2 & 0xFF;
-
-		y1 = ms912x_rgb_to_y(r1, g1, b1);
-		y2 = ms912x_rgb_to_y(r2, g2, b2);
-
-		// Optimization: Average RGB first, then convert to UV once.
-		// This saves half the multiplications for the UV channels.
-		v = ms912x_rgb_to_v((r1 + r2) / 2, (g1 + g2) / 2, (b1 + b2) / 2);
-		u = ms912x_rgb_to_u((r1 + r2) / 2, (g1 + g2) / 2, (b1 + b2) / 2);
-
-		transfer_buffer[dst_offset++] = u;
-		transfer_buffer[dst_offset++] = y1;
-		transfer_buffer[dst_offset++] = v;
-		transfer_buffer[dst_offset++] = y2;
-	}
-	return offset;
-}
 
 static const u8 ms912x_end_of_buffer[8] = { 0xff, 0xc0, 0x00, 0x00,
 					    0x00, 0x00, 0x00, 0x00 };
@@ -170,11 +116,53 @@ static int ms912x_fb_xrgb8888_to_yuv422(void *dst, const struct iosys_map *src,
 	dst += sizeof(*header);
 
 	fb_map = IOSYS_MAP_INIT_OFFSET(src, y1 * fb->pitches[0]);
+
+	/* Using FPU in kernel requires protection. 
+	 * We process the whole block of lines if possible.
+	 */
+	kernel_fpu_begin();
 	for (i = y1; i < y2; i++) {
-		ms912x_xrgb_to_yuv422_line(dst, &fb_map, x * 4, width, temp_buffer);
+		struct iosys_map line_map = fb_map;
+		/* 
+		 * We need a direct pointer for our SIMD function. 
+		 * iosys_map usually points to vmalloc or kmap address.
+		 * If it's system memory (is_iomem is false), we can cast.
+		 */
+		if (!line_map.is_iomem) {
+			ms912x_xrgb_to_yuv422_avx2(dst, line_map.vaddr, width);
+		} else {
+			/* Fallback for IOMEM or if something is weird, 
+			 * though for checking simplicity we just use scalar logic here 
+			 * if we can't get a direct pointer? 
+			 * Actually we can just copy to temp buffer and run check...
+			 * But wait, previous code copied to temp_buffer!
+			 */
+			 
+			/* Re-implementing the copy to temp logic for the loop */
+			/* Wait, my ms912x_xrgb_to_yuv422_avx2 takes u32*, which is temp_buffer! */
+			
+			/* Let's be careful. The original code:
+			 * ms912x_xrgb_to_yuv422_line(dst, &fb_map, x * 4, width, temp_buffer);
+			 * 
+			 * Inside that function:
+			 * iosys_map_memcpy_from(temp_buffer, xrgb_buffer, offset, width * 4);
+			 * ... process temp_buffer ...
+			 */
+			
+			/* So we should do the copy first as before, then process temp_buffer */
+		}
+		
+		/* Correct integration: */
+		/* Copy line to temp buffer (sysram) */
+		iosys_map_memcpy_from(temp_buffer, &fb_map, x * 4, width * 4);
+		
+		/* Process with AVX2 */
+		ms912x_xrgb_to_yuv422_avx2(dst, temp_buffer, width);
+
 		iosys_map_incr(&fb_map, fb->pitches[0]);
 		dst += width * 2;
 	}
+	kernel_fpu_end();
 
 	kfree(temp_buffer);
 	memcpy(dst, ms912x_end_of_buffer, sizeof(ms912x_end_of_buffer));

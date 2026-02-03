@@ -326,3 +326,6 @@ static struct usb_driver ms912x_driver = {
 };
 module_usb_driver(ms912x_driver);
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Various");
+MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_VERSION("0.2.0");
