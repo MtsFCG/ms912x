@@ -208,6 +208,7 @@ static const struct drm_simple_display_pipe_funcs ms912x_pipe_funcs = {
 
 static const uint32_t ms912x_pipe_formats[] = {
 	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_UYVY,
 };
 
 static int ms912x_usb_probe(struct usb_interface *interface,
@@ -328,4 +329,4 @@ module_usb_driver(ms912x_driver);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Various");
 MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_VERSION("0.3.0");
+MODULE_VERSION("0.5.0");
