@@ -31,6 +31,7 @@ struct ms912x_usb_request {
 	struct work_struct work;
 	struct timer_list timer;
 	struct completion done;
+	void *conversion_buffer;
 };
 
 struct ms912x_device {
