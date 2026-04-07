@@ -144,7 +144,7 @@ static void ms912x_pipe_disable(struct drm_simple_display_pipe *pipe)
 	ms912x_power_off(ms912x);
 }
 
-enum drm_mode_status
+static enum drm_mode_status
 ms912x_pipe_mode_valid(struct drm_simple_display_pipe *pipe,
 		       const struct drm_display_mode *mode)
 {
@@ -155,7 +155,7 @@ ms912x_pipe_mode_valid(struct drm_simple_display_pipe *pipe,
 	return MODE_OK;
 }
 
-int ms912x_pipe_check(struct drm_simple_display_pipe *pipe,
+static int ms912x_pipe_check(struct drm_simple_display_pipe *pipe,
 		      struct drm_plane_state *new_plane_state,
 		      struct drm_crtc_state *new_crtc_state)
 {
@@ -207,8 +207,8 @@ static const struct drm_simple_display_pipe_funcs ms912x_pipe_funcs = {
 };
 
 static const uint32_t ms912x_pipe_formats[] = {
-	DRM_FORMAT_XRGB8888,
 	DRM_FORMAT_UYVY,
+	DRM_FORMAT_XRGB8888,
 };
 
 static int ms912x_usb_probe(struct usb_interface *interface,

@@ -1,6 +1,7 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include "ms912x.h"
 
 /*
  * This file is compiled with -mavx2 -O3.

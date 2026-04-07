@@ -126,46 +126,12 @@ static int ms912x_fb_xrgb8888_to_yuv422(struct ms912x_usb_request *request,
 
 	fb_map = IOSYS_MAP_INIT_OFFSET(src, y1 * fb->pitches[0]);
 
-	/* Using FPU in kernel requires protection. 
-	 * We process the whole block of lines if possible.
-	 */
 	kernel_fpu_begin();
 	for (i = y1; i < y2; i++) {
-		struct iosys_map line_map = fb_map;
-		/* 
-		 * We need a direct pointer for our SIMD function. 
-		 * iosys_map usually points to vmalloc or kmap address.
-		 * If it's system memory (is_iomem is false), we can cast.
-		 */
-		if (!line_map.is_iomem) {
-			ms912x_xrgb_to_yuv422_avx2(dst, line_map.vaddr, width);
-		} else {
-			/* Fallback for IOMEM or if something is weird, 
-			 * though for checking simplicity we just use scalar logic here 
-			 * if we can't get a direct pointer? 
-			 * Actually we can just copy to temp buffer and run check...
-			 * But wait, previous code copied to temp_buffer!
-			 */
-			 
-			/* Re-implementing the copy to temp logic for the loop */
-			/* Wait, my ms912x_xrgb_to_yuv422_avx2 takes u32*, which is temp_buffer! */
-			
-			/* Let's be careful. The original code:
-			 * ms912x_xrgb_to_yuv422_line(dst, &fb_map, x * 4, width, temp_buffer);
-			 * 
-			 * Inside that function:
-			 * iosys_map_memcpy_from(temp_buffer, xrgb_buffer, offset, width * 4);
-			 * ... process temp_buffer ...
-			 */
-			
-			/* So we should do the copy first as before, then process temp_buffer */
-		}
-		
-		/* Correct integration: */
-		/* Copy line to temp buffer (sysram) */
+		/* Copiar línea al buffer temporal (sysram) para procesamiento seguro */
 		iosys_map_memcpy_from(temp_buffer, &fb_map, x * 4, width * 4);
 		
-		/* Process with AVX2 */
+		/* Procesar con AVX2 */
 		ms912x_xrgb_to_yuv422_avx2(dst, temp_buffer, width);
 
 		iosys_map_incr(&fb_map, fb->pitches[0]);
@@ -173,9 +139,44 @@ static int ms912x_fb_xrgb8888_to_yuv422(struct ms912x_usb_request *request,
 	}
 	kernel_fpu_end();
 
+	/* Fin del buffer */
+	memcpy(dst, ms912x_end_of_buffer, sizeof(ms912x_end_of_buffer));
+	return 0;
+}
 
+static int ms912x_fb_uyvy_to_uyvy(struct ms912x_usb_request *request,
+				  const struct iosys_map *src,
+				  struct drm_framebuffer *fb,
+				  struct drm_rect *rect)
+{
+	void *dst = request->transfer_buffer;
+	struct ms912x_frame_update_header *header =
+		(struct ms912x_frame_update_header *)dst;
+	struct iosys_map fb_map;
+	int i, x, y1, y2, width;
 
-	/* No kfree needed here */
+	y1 = rect->y1;
+	y2 = min((unsigned int)rect->y2, fb->height);
+	x = rect->x1;
+	width = drm_rect_width(rect);
+
+	header->header = cpu_to_be16(0xff00);
+	header->x = x / 16;
+	header->y = cpu_to_be16(y1);
+	header->width = width / 16;
+	header->height = cpu_to_be16(drm_rect_height(rect));
+	dst += sizeof(*header);
+
+	/* UYVY is 2 bytes per pixel */
+	fb_map = IOSYS_MAP_INIT_OFFSET(src, y1 * fb->pitches[0]);
+
+	for (i = y1; i < y2; i++) {
+		iosys_map_memcpy_from(dst, &fb_map, x * 2, width * 2);
+
+		iosys_map_incr(&fb_map, fb->pitches[0]);
+		dst += width * 2;
+	}
+
 	memcpy(dst, ms912x_end_of_buffer, sizeof(ms912x_end_of_buffer));
 	return 0;
 }
@@ -208,11 +209,19 @@ int ms912x_fb_send_rect(struct drm_framebuffer *fb, const struct iosys_map *map,
 	if (ret < 0)
 		goto dev_exit;
 
-	if (ret < 0)
-		goto dev_exit;
+    /* DEBUG: Identify format */
+    {
+        static u32 last_fmt = 0;
+        if (fb->format->format != last_fmt) {
+            printk(KERN_INFO "ms912x: format change detected: %p4cc\n", &fb->format->format);
+            last_fmt = fb->format->format;
+        }
+    }
 
-	ret = ms912x_fb_xrgb8888_to_yuv422(current_request,
-					   map, fb, rect);
+	if (fb->format->format == DRM_FORMAT_UYVY)
+		ret = ms912x_fb_uyvy_to_uyvy(current_request, map, fb, rect);
+	else
+		ret = ms912x_fb_xrgb8888_to_yuv422(current_request, map, fb, rect);
 	
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 	if (ret < 0)
