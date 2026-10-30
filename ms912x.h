@@ -44,11 +44,11 @@ struct ms912x_device {
 	
 	struct drm_rect update_rect;
 
-	/* Double buffer to allow memcpy and transfer 
-	 * to happen in parallel
+	/* Increased buffer count for better pipelining 
+	 * (Quad Buffering)
 	 */
 	int current_request;
-	struct ms912x_usb_request requests[2];
+	struct ms912x_usb_request requests[4];
 };
 
 struct ms912x_request {

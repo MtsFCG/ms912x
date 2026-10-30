@@ -201,7 +201,6 @@ int ms912x_fb_send_rect(struct drm_framebuffer *fb, const struct iosys_map *map,
 	rect->x1 = x;
 	rect->x2 = x + width;
 	current_request = &ms912x->requests[ms912x->current_request];
-	prev_request = &ms912x->requests[1 - ms912x->current_request];
 
 	drm_dev_enter(drm, &idx);
 
@@ -227,19 +226,18 @@ int ms912x_fb_send_rect(struct drm_framebuffer *fb, const struct iosys_map *map,
 	if (ret < 0)
 		goto dev_exit;
 
-	/* Sending frames too fast, drop it.
-	 * Do not wait (timeout=0) to avoid blocking the compositor/cursor
-	 * if the USB bus is busy. It's better to drop a frame than to lag.
+	/* If the target buffer is still being sent, we must drop this frame 
+	 * to avoid overrunning the USB bus and causing lag.
 	 */
-	if (!wait_for_completion_timeout(&prev_request->done, 0)) {
-
+	if (!wait_for_completion_timeout(&current_request->done, 0)) {
 		ret = -ETIMEDOUT;
 		goto dev_exit;
 	}
+	reinit_completion(&current_request->done);
 
 	current_request->transfer_len = width * 2 * drm_rect_height(rect) + 16;
 	queue_work(system_long_wq, &current_request->work);
-	ms912x->current_request = 1 - ms912x->current_request;
+	ms912x->current_request = (ms912x->current_request + 1) % 4;
 dev_exit:
 	drm_dev_exit(idx);
 	return ret;

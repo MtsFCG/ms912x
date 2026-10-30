@@ -214,7 +214,7 @@ static const uint32_t ms912x_pipe_formats[] = {
 static int ms912x_usb_probe(struct usb_interface *interface,
 			    const struct usb_device_id *id)
 {
-	int ret;
+	int ret, i;
 	struct ms912x_device *ms912x;
 	struct drm_device *dev;
 
@@ -244,20 +244,22 @@ static int ms912x_usb_probe(struct usb_interface *interface,
 	/* This stops weird behavior in the device */
 	ms912x_set_resolution(ms912x, &ms912x_mode_list[0]);
 
-	ret = ms912x_init_request(ms912x, &ms912x->requests[0],
-				  2048 * 2048 * 2);
-	if (ret)
-		goto err_put_device;
-
-	ret = ms912x_init_request(ms912x, &ms912x->requests[1],
-				  2048 * 2048 * 2);
-	if (ret)
-		goto err_free_request_0;
-	complete(&ms912x->requests[1].done);
+	for (i = 0; i < 4; i++) {
+		ret = ms912x_init_request(ms912x, &ms912x->requests[i],
+					  2048 * 2048 * 2);
+		if (ret)
+			goto err_free_requests;
+		
+		/* Mark all but the first one as "done" so they can be used 
+		 * by the producer immediately.
+		 */
+		if (i > 0)
+			complete(&ms912x->requests[i].done);
+	}
 
 	ret = ms912x_connector_init(ms912x);
 	if (ret)
-		goto err_free_request_1;
+		goto err_free_requests;
 
 	ret = drm_simple_display_pipe_init(&ms912x->drm, &ms912x->display_pipe,
 					   &ms912x_pipe_funcs,
@@ -265,7 +267,7 @@ static int ms912x_usb_probe(struct usb_interface *interface,
 					   ARRAY_SIZE(ms912x_pipe_formats),
 					   NULL, &ms912x->connector);
 	if (ret)
-		goto err_free_request_1;
+		goto err_free_requests;
 
 	drm_plane_enable_fb_damage_clips(&ms912x->display_pipe.plane);
 
@@ -277,14 +279,13 @@ static int ms912x_usb_probe(struct usb_interface *interface,
 
 	ret = drm_dev_register(dev, 0);
 	if (ret)
-		goto err_free_request_1;
+		goto err_free_requests;
 
 	return 0;
 
-err_free_request_1:
-	ms912x_free_request(&ms912x->requests[1]);
-err_free_request_0:
-	ms912x_free_request(&ms912x->requests[0]);
+err_free_requests:
+	for (i = 0; i < 4; i++)
+		ms912x_free_request(&ms912x->requests[i]);
 err_put_device:
 	put_device(ms912x->dmadev);
 	return ret;
@@ -295,13 +296,15 @@ static void ms912x_usb_disconnect(struct usb_interface *interface)
 	struct ms912x_device *ms912x = usb_get_intfdata(interface);
 	struct drm_device *dev = &ms912x->drm;
 
-	cancel_work_sync(&ms912x->requests[0].work);
-	cancel_work_sync(&ms912x->requests[1].work);
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		cancel_work_sync(&ms912x->requests[i].work);
+		ms912x_free_request(&ms912x->requests[i]);
+	}
 	drm_kms_helper_poll_fini(dev);
 	drm_dev_unplug(dev);
 	drm_atomic_helper_shutdown(dev);
-	ms912x_free_request(&ms912x->requests[0]);
-	ms912x_free_request(&ms912x->requests[1]);
 	put_device(ms912x->dmadev);
 	ms912x->dmadev = NULL;
 }
